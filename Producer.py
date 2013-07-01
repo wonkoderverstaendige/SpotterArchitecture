@@ -9,8 +9,6 @@ import threading
 import Queue
 from RepeatTimer import RepeatTimer
 
-# TODO: Generalize production behavior to be able to yield anything
-
 class Producer(threading.Thread):
     timeout = 5
 
