@@ -11,13 +11,13 @@ from datetime import datetime
 import threading
 
 class RepeatTimer(threading.Thread):
-    def __init__(self, interval, callable, args=[], kwargs={}):
+    def __init__(self, interval, call_fun, args=[], kwargs={}):
         threading.Thread.__init__(self)
         # interval_current shows number of milliseconds in currently triggered <tick>
         self.interval_current = interval
         # interval_new shows number of milliseconds for next <tick>
         self.interval_new = interval
-        self.callable = callable
+        self.callable = call_fun
         self.args = args
         self.kwargs = kwargs
         self.event = threading.Event()

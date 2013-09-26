@@ -7,6 +7,10 @@ Created on Mon Jul 01 17:44:21 2013
 """
 import threading
 import Queue
+import logging
+
+#logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class Consumer(threading.Thread):
     """ Threaded consumer class.
@@ -14,17 +18,24 @@ class Consumer(threading.Thread):
 
     Returns:
     """
-
+    # tolerated time without input. After that, die
     timeout = 5
+    # number of received items
+    count = 0
 
-    def __init__(self, consumer_list):
+    def __init__(self, consumers, *args, **kwargs):
         threading.Thread.__init__(self)
-        self.consumer_list = consumer_list
-        self.input = Queue.Queue()
-        self.consumer_list.append(self.input)
+        self.consumers = self._as_iterable(consumers)
+        self.input = Queue.Queue(maxsize=16)
+        self.consumers.append(self.input)
+
+        if 'logger' in kwargs:
+            self.log = kwargs['logger']
+        else:
+            self.log = logging.getLogger(__name__)
 
     def run(self):
-        print self, ' starting up'
+        self.log.info('%s starting up', self)
         while True:
             try:
                 data = self.input.get(timeout=self.timeout)
@@ -32,16 +43,31 @@ class Consumer(threading.Thread):
                 data = 'timeout'
 
             if data in ['shutdown', 'timeout']:
-                print self, ' ', data
+                self.log.info('%s exiting on %s', self, data)
                 return
             else:
                 self.process(data)
 
     def process(self, data):
-        print self, ' processing data: ', data
+        self.log.debug('Q: %d; %s processing data:', self.input.qsize(), self, data)
 
 
     def stop(self):
-        self.consumer_list.remove(self.input)
+        self.consumers.remove(self.input)
         self.input.put('shutdown')
         self.join()
+
+    def _as_iterable(self, maybe_iterable):
+        """
+        Check if iterable. If not, wrap in list.
+
+        !!! Does not work on strings
+        """
+        try:
+            iter(maybe_iterable)
+        except TypeError:
+            # not iterable, wrap
+            return [maybe_iterable]
+        else:
+            # is iterable, return as is
+            return maybe_iterable
