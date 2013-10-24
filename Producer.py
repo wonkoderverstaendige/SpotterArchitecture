@@ -20,11 +20,13 @@ logger = logging.getLogger(__name__)
 class Producer(threading.Thread):
     # time to tolerate an empty input Queue. Thread only stops on timeout when
     # in timed mode
-    timeout = 5
+    timeout = 3
     # number of produced items
     count = 0
     # flag if timed loop is already running
     loop_active = False
+    # buffer size
+    bufsize = 32
 
     def __init__(self, consumers, producers, interval=0.033, mode='timed', resource=None, *args, **kwargs):
         """
@@ -35,11 +37,17 @@ class Producer(threading.Thread):
         # helper reference to make implementing produce() easier
         self.q = Queue
 
+        if 'bufsize' in kwargs:
+            self.bufsize = kwargs['bufsize']
+
+        if 'timeout' in kwargs:
+            self.timeout = kwargs['timeout']
+
         self.consumers = self._as_iterable(consumers)
         self.producers = self._as_iterable(producers)
 
         # attach own input Queue to list of producers
-        self.input = Queue.Queue(maxsize=16)
+        self.input = Queue.Queue(maxsize=self.bufsize)
         self.producers.append(self.input)
         self.resource = resource
 
@@ -75,7 +83,7 @@ class Producer(threading.Thread):
         repeating timer and remove the producer from the producer queue list.
         """
         self.log.info('%s stopping...', self)
-        self.input.put('shutdown')
+        self.input.put('stop')
 
     def _run_timed(self):
         """
@@ -91,7 +99,7 @@ class Producer(threading.Thread):
                 data = 'timeout'
 
             # terminate loop on shutdown signal
-            if data in ['shutdown', 'timeout']:
+            if data in ['shutdown', 'timeout', 'stop']:
                 self._remove()
                 self.log.info('%s exiting on %s', self, data)
                 self.timer.cancel()
@@ -129,11 +137,13 @@ class Producer(threading.Thread):
                 if not self.input.empty():
                     self.log.debug('%s item in input', self)
                     data = self.input.get_nowait() #timeout=self.timeout
+                    
                     # terminate loop on shutdown signal
-                    if data in ['shutdown', 'timeout']:
+                    if data in ['shutdown', 'timeout', 'stop']:
                         self._remove()
                         self.log.info('%s exiting on %s', self, data)
                         return
+                        
             except Queue.Empty:
                 self.log.error('%s timed out reading input Queue in buffered mode!!', self)
 
@@ -144,7 +154,6 @@ class Producer(threading.Thread):
                     self._distribute(product)
                 else:
                     break
-
 
     def _can_distribute(self):
         """ Check if a) any queues full, or b) a priority queue is full. """

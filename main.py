@@ -6,23 +6,21 @@ Created on Mon Jul 01 15:53:41 2013
 
 """
 # sys libs
-
 import time
 import logging
 
 # 3rd party
 import cv2
-#import glumpy as gp
 
 
 # user
 from Producer import Producer
 from Consumer import Consumer
 
-examples = [('../ladies.mp4', 7338),
-            ('../example.wmv', 1996)]
+examples = [('media/video/r52r2f107.avi', 200),
+            ('media/video/test.avi', 200)]
 
-class Grabber(Producer):
+class SourceGrabber(Producer):
     """
     Main producer. Grabs frame from resource and adds result to queue of
     consumers.
@@ -48,10 +46,11 @@ class Grabber(Producer):
                 self.log.debug('produced frame: %d', self.count)
                 return frame
             else:
+                self.log.debug('%s no frame returned!: %d', self,  self.count)
                 self.stop()
 
 
-class GUIFrameGrabber(Producer):
+class GUIGrabber(Producer):
     """
     Hybrid consumer/producer. Attaches itself to the frame producer (Grabber)
     at a selected frame rate and only produces frames for its consumers at the
@@ -93,8 +92,8 @@ class Tracker(Consumer):
             return
         try:
             self.log.debug("Q:%3d; tracking frame: %d", self.input.qsize(), self.count)
-#            hsv = cv2.cvtColor(data,cv2.COLOR_BGR2HSV)
-#            cv2.imshow('hsv', hsv)
+            hsv = cv2.cvtColor(data,cv2.COLOR_BGR2HSV)
+            cv2.imshow('hsv', hsv)
             self.count += 1
         except:
             self.log.error('Tracking frame failed on:')
@@ -146,29 +145,30 @@ if __name__ == '__main__':
     logger = logging.getLogger(__name__)
 
     cv2.namedWindow('example')
-#    cv2.namedWindow('hsv')
+    cv2.namedWindow('hsv')
 
     logger.info('Instantiating threads')
-    g = Grabber(consumer_qlist,
-                producer_qlist,
-                interval=0.001,
-                mode='buffered',
-                fname=fname)
-
-    gui_frame_grabber = GUIFrameGrabber(gui_qlist,
-                                       producer_qlist,
-                                       interval=0.03,
-                                       timed='timed',
-                                       resource=consumer_qlist)
+    source_grabber = SourceGrabber(consumer_qlist,
+                                   producer_qlist,
+                                   interval=0.1,
+                                   mode='buffered',
+                                   fname=fname)
+ 
+    gui_grabber = GUIGrabber(gui_qlist,
+                             producer_qlist,
+                             interval=0.016,
+                             timed='timed',
+                             resource=consumer_qlist,
+                             bufsize=2)
 
     d = Display(gui_qlist)
     t = Tracker(consumer_qlist)
 
     logger.info('Starting up threads')
     d.start()
-    gui_frame_grabber.start()
+    gui_grabber.start()
     t.start()
-    g.start()
+    source_grabber.start()
     tstart = time.clock()
 
     tprev = time.clock()
@@ -188,20 +188,23 @@ if __name__ == '__main__':
 #        time.sleep(0.1)
 
     logger.info('Frames in source: %d', num_frames)
-    logger.info('FPS: %d', num_frames/(time.clock()-tstart))
+    logger.info('FPS: %d', t.count/(time.clock()-tstart))
 
     logger.info('Stopping all remaining threads...')
 
     try:
-        if g.is_alive():
-            g.stop()
+        if source_grabber.is_alive():
+            source_grabber.stop()
         if t.is_alive():
             t.stop()
         if d.is_alive():
             d.stop()
-        if gui_frame_grabber.is_alive():
-            gui_frame_grabber.stop()
+        if gui_grabber.is_alive():
+            gui_grabber.stop()
+        cv2.destroyAllWindows()
     except:
         pass
+
+    logger.info('Done.')
 
     #print threading.enumerate()
