@@ -5,206 +5,130 @@ Created on Mon Jul 01 15:53:41 2013
 @author: <Ronny Eichler> ronny.eichler@gmail.com
 
 """
-# sys libs
+NO_EXIT_CONFIRMATION = True
+
+# buitlin libs
+import sys
+import os
+import platform
 import time
 import logging
 
 # 3rd party
-import cv2
+#import PyQt4 ## forces use of PyQt4 instead of PySide
+from pyqtgraph.Qt import QtGui, QtCore
+import numpy as np
+import pyqtgraph as pg
+import pyqtgraph.ptime as ptime
 
+#Qt user interface files
+sys.path.append('./ui')
+from mainUi import Ui_MainWindow
 
 # user
-from Producer import Producer
-from Consumer import Consumer
+sys.path.append('./lib')
+from spotter import Spotter
 
 examples = [('media/video/r52r2f107.avi', 200),
             ('media/video/test.avi', 200)]
 
-class SourceGrabber(Producer):
-    """
-    Main producer. Grabs frame from resource and adds result to queue of
-    consumers.
-    """
-    def __init__(self, *args, **kwargs):
-        Producer.__init__(self, *args, **kwargs)
-        if 'fname' in kwargs:
-            fname = kwargs['fname']
+class Main(QtGui.QMainWindow):
+    def __init__(self, *args, **kwargs): #, source, destination, fps, size, gui, serial
 
-        self.log.info('Opening frame source %s', fname)
-        self.resource = cv2.VideoCapture(fname)
+        if 'logger' in kwargs:
+            self.logger = kwargs['logger']
+        if 'app' in kwargs:
+            self.app = kwargs['app']
 
-#        self.timer.change_interval(0.001)
+        QtGui.QMainWindow.__init__(self)    
+#        mw = QtGui.QMainWindow()
+        self.ui = Ui_MainWindow()
+        self.ui.setupUi(self)
+        self.resize(800,800)
+        self.show()
+        
+        self.vb = pg.ViewBox()
+        self.ui.graphicsView.setCentralItem(self.vb)
+        self.vb.setAspectLocked()
+        self.img = pg.ImageItem()
+        self.vb.addItem(self.img)
+        self.vb.setRange(QtCore.QRectF(0, 0, 512, 512))
+#        self.img.setPxMode(True)
+        
+        self.logger.info('%s starting spotter', self)
+        self.spotter = Spotter(*args, **kwargs)    
+        self.spotter.gui_grabber.displayTarget = self.img
+        self.logger.info('%s spotter instantiated', self)
 
-    def produce(self):
-        if self.resource is not None:
-            try:
-                rv, frame = self.resource.read()
-            except:
-                self.log.error('Frame acquisition failed!')
-            if rv:
-                self.count += 1
-                self.log.debug('produced frame: %d', self.count)
-                return frame
-            else:
-                self.log.debug('%s no frame returned!: %d', self,  self.count)
-                self.stop()
+        self.lastTime = ptime.time()
+        self.fps = None
 
+        # main window refresh timer
+#        self.timer = QtCore.QTimer()
+#        self.timer.timeout.connect(self.update)
+#        self.timer.start(0)
+        self.update()
 
-class GUIGrabber(Producer):
-    """
-    Hybrid consumer/producer. Attaches itself to the frame producer (Grabber)
-    at a selected frame rate and only produces frames for its consumers at the
-    specified rate. This allows to decouple frame acquisition and processing
-    from rendering.
-    """
-    def __init__(self, *args, **kwargs):
-        Producer.__init__(self, *args, **kwargs)
-        self.origin = self.resource
-        self.resource = self.q.Queue(maxsize=16)
-
-    def produce(self):
-        self.count+=1
-        self.log.debug("Q:%3d; producing: %d", self.input.qsize(), self.count)
-
-        while not self.resource.empty():
-            self.log.debug("Q:%2d; pre-emptying queue", self.resource.qsize())
-            self.resource.get_nowait()
-
-        self.origin.append(self.resource)
-        self.log.debug("Q:%3d; receiving item: %d", self.input.qsize(), self.count)
-        try:
-            frame = self.resource.get(timeout=1)
-        except self.q.Empty:
-            frame = None
-
-        self.origin.remove(self.resource)
-
-        self.log.debug("Q:%3d; returning frame for display: %d", self.input.qsize(), self.count)
-        return frame
+    def update(self):
+        self.logger.info('%s:Processing Events', self)
+        now = ptime.time()
+        dt = now - self.lastTime
+        self.lastTime = now
+        if self.fps is None:
+            self.fps = 1.0/dt
+        else:
+            s = np.clip(dt*3., 0, 1)
+            self.fps = self.fps * (1-s) + (1.0/dt) * s
+        self.ui.fpsLabel.setText('%0.2f fps' % self.fps)
+#        self.app.processEvents()  ## force complete redraw for every plot
+        QtCore.QTimer.singleShot(1, self.update)
+#        global ui, lastTime, fps, img
+#        rv, frame = src.read()
+#        # rotate frame if wanted
+#        frame = np.rot90(frame, 3)
+#        # flip frame
+#        #frame = np.fliplr(frame)    
 
 
-class Tracker(Consumer):
-    def __init__(self, *args, **kwargs):
-        Consumer.__init__(self, *args, **kwargs)
+    def closeEvent(self, event):
+        """
+        Exiting the interface has to kill the spotter class and subclasses
+        properly, especially the writer and serial handles, otherwise division
+        by zero might be imminent.
+        """
+        if NO_EXIT_CONFIRMATION:
+            reply = QtGui.QMessageBox.Yes
+        else:
+            reply = QtGui.QMessageBox.question(self,
+                                               'Exiting...',
+                                               'Are you sure?',
+                                               QtGui.QMessageBox.Yes,
+                                               QtGui.QMessageBox.No )
+        if reply == QtGui.QMessageBox.Yes:
+            self.spotter.stop_all()
+#            time.sleep(1)
+            event.accept()
+        else:
+            event.ignore()
 
-    def process(self, data):
-        if data is None:
-            return
-        try:
-            self.log.debug("Q:%3d; tracking frame: %d", self.input.qsize(), self.count)
-            hsv = cv2.cvtColor(data,cv2.COLOR_BGR2HSV)
-            cv2.imshow('hsv', hsv)
-            self.count += 1
-        except:
-            self.log.error('Tracking frame failed on:')
-            print data
-
-
-class Display(Consumer):
-    def __init__(self, *args, **kwargs):
-        Consumer.__init__(self, *args, **kwargs)
-
-    def process(self, data):
-        if data is None:
-            return
-        try:
-            self.log.debug("Q:%3d; displaying frame: %d", self.input.qsize(), self.count)
-            cv2.imshow('example', data)
-            self.count += 1
-        except:
-            self.log.error('Displaying frame failed!')
-
-
-#class Writer(Consumer):
-#    def __init__(self, *args, **kwargs):
-#        Consumer.__init__(self, *args, **kwargs)
-#        self.video_writer = cv2.VideoWriter('test.avi', -1, 30, ())
-#
-#    def process(self, data):
-#        try:
-#            self.video_writer.write(data)
-#        except:
-#            print "Writing frame failed!"
-
+#def main(*args, **kwargs): #source, destination, fps, size, gui, serial
+#        window = Main(*args, **kwargs)
+#        window.show()
+#        window.raise_() # needed on OSX?
 
 ###############################################################################
 #        MAIN LOOP
 ###############################################################################
 if __name__ == '__main__':
-
-    # list of general consumer queues
-    consumer_qlist = []
-    # list of general producer queues
-    producer_qlist = []
-    # list of consumers queues for rendering
-    gui_qlist = []
-
-    fname, num_frames = examples[1]
-
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    cv2.namedWindow('example')
-    cv2.namedWindow('hsv')
-
-    logger.info('Instantiating threads')
-    source_grabber = SourceGrabber(consumer_qlist,
-                                   producer_qlist,
-                                   interval=0.1,
-                                   mode='buffered',
-                                   fname=fname)
- 
-    gui_grabber = GUIGrabber(gui_qlist,
-                             producer_qlist,
-                             interval=0.016,
-                             timed='timed',
-                             resource=consumer_qlist,
-                             bufsize=2)
-
-    d = Display(gui_qlist)
-    t = Tracker(consumer_qlist)
-
-    logger.info('Starting up threads')
-    d.start()
-    gui_grabber.start()
-    t.start()
-    source_grabber.start()
-    tstart = time.clock()
-
-    tprev = time.clock()
-    cprev = 0
-    itv = 0
-
-    while cv2.waitKey(15) < 0 and d.is_alive():
-        if t.count-cprev >= 100:
-            tel = time.clock()-tprev
-            f = t.count-cprev
-            logger.info('fps %.1f', f*1.0/tel)
-            tprev = time.clock()
-            cprev = t.count
-
-        #pass
-#    while g.is_alive():
-#        time.sleep(0.1)
-
-    logger.info('Frames in source: %d', num_frames)
-    logger.info('FPS: %d', t.count/(time.clock()-tstart))
-
-    logger.info('Stopping all remaining threads...')
-
-    try:
-        if source_grabber.is_alive():
-            source_grabber.stop()
-        if t.is_alive():
-            t.stop()
-        if d.is_alive():
-            d.stop()
-        if gui_grabber.is_alive():
-            gui_grabber.stop()
-        cv2.destroyAllWindows()
-    except:
-        pass
-
-    logger.info('Done.')
-
-    #print threading.enumerate()
+#    app = QtGui.QApplication([])
+#    if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
+#        QtGui.QApplication.instance().exec_()
+    QtGui.QApplication.setGraphicsSystem('raster')
+    app = QtGui.QApplication([])
+    main = Main(logger=logger, app=app)
+    rv = app.exec_()
+    logger.info('Application return value: %d. Done.', rv)
+    sys.exit(rv)
